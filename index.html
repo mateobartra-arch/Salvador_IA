@@ -588,17 +588,22 @@ async function saveToFB(data){
 // ── CONTEXTO IA ───────────────────────────────────────────────
 function buildCtx(placa){
   const allF=[...HIST.fallas,...liveDB.fallas];
-  const fallas=placa?allF.filter(f=>(f.placa||f.unidad||'')===placa):allF.slice(-100);
+  // Si hay unidad activa, solo sus fallas. Si no, últimas 40
+  const fallas=placa
+    ? allF.filter(f=>(f.placa||f.unidad||'')===placa).slice(-50)
+    : allF.filter(f=>f.desc||f.descripcion).slice(-40);
   const prev=HIST.prev.filter(p=>!placa||p.placa===placa);
   const tracto=HIST.tractos.find(t=>t.placa===placa);
-  let ctx=`ASISTENTE "SALVADOR" — MISAGI S.A.C., Arequipa Perú\nFlota: ${[...TRACTOS,...TOLVAS].join(',')}\nTotal historial: ${allF.length}\n\n`;
-  if(tracto) ctx+=`TRACTO ${placa}: ${tracto.marca||'—'}, KM=${tracto.km?.toLocaleString?.()}, ${tracto.estado}\n`;
-  if(prev.length){ ctx+='PREVENTIVO:\n'; prev.slice(0,4).forEach(p=>ctx+=`  ${p.placa}: km_actual=${p.km_actual}, próx=${p.km_mp}, ${p.estado}\n`); }
-  ctx+=`\nHISTORIAL (${fallas.length}):\n`;
-  fallas.slice(-100).forEach(f=>{
-    const d=f.desc||f.descripcion||''; const di=f.diag||f.diagnostico||'';
-    if(!d&&!di) return;
-    ctx+=`[${f.fecha||'s/f'}|${f.placa||f.unidad||''}|${f.km||0}km|${f.tipo||f.estadoFalla||''}] ${d}${di?' →'+di:''}\n`;
+  let ctx=`MISAGI S.A.C. — Asistente Salvador\n`;
+  ctx+=`Flota: ${[...TRACTOS,...TOLVAS].join(',')}\n`;
+  if(tracto) ctx+=`${placa}: ${tracto.marca||''}, ${tracto.km?.toLocaleString?.()}km, ${tracto.estado}\n`;
+  if(prev.length){ ctx+='MP: '; ctx+=prev.slice(0,3).map(p=>`${p.placa} próx=${p.km_mp}km est=${p.estado}`).join(' | ')+'\n'; }
+  ctx+=`\nHISTORIAL (${fallas.length} registros relevantes):\n`;
+  fallas.forEach(f=>{
+    const d=(f.desc||f.descripcion||'').substring(0,80);
+    const di=(f.diag||f.diagnostico||'').substring(0,40);
+    if(!d) return;
+    ctx+=`[${f.fecha||'s/f'}|${f.placa||f.unidad||''}|${f.km||0}km] ${d}${di?' →'+di:''}\n`;
   });
   return ctx;
 }
@@ -616,7 +621,10 @@ window.sendMsg=async function(){
   document.getElementById('photoStrip').innerHTML='';
   addTyping();
 
-  const sys=buildCtx(chatUnit)+`
+  // Contexto compacto — máx 6000 chars para no reventar el Worker
+  const ctxRaw=buildCtx(chatUnit);
+  const ctxTrim=ctxRaw.length>5500?ctxRaw.slice(0,5500)+'\n[...historial truncado]':ctxRaw;
+  const sys=ctxTrim+`
 
 INSTRUCCIONES:
 Eres Salvador, asistente técnico de MISAGI. Español directo para mecánicos en campo.
@@ -624,18 +632,27 @@ Eres Salvador, asistente técnico de MISAGI. Español directo para mecánicos en
 MODO REGISTRO — si describen una falla para guardar, responde SOLO esto sin texto extra:
 REGISTRO_FALLA:{"placa":"","fecha":"YYYY-MM-DD","km":0,"descripcion":"","diagnostico":"","accionCorrectiva":"","gravedad":"BAJA|MEDIA|ALTA|CRÍTICA","estadoFalla":"ABIERTO","estado":"OPERATIVO","costo":0,"tecnico":""}
 
-MODO CONSULTA — datos reales del historial con fechas.
-MODO PREDICCIÓN — estima próxima falla por km.
+MODO CONSULTA — datos reales del historial con fechas exactas.
+MODO PREDICCIÓN — estima próxima falla por km histórico.
 MODO FOTO — diagnóstico visual técnico.
 
-Fecha hoy: ${new Date().toISOString().slice(0,10)}. Si falta placa o descripción, pide solo eso. Respuestas cortas.`;
+Fecha hoy: ${new Date().toISOString().slice(0,10)}. Si falta placa o descripción, pídelo. Respuestas cortas y directas.`;
 
   try{
-    const msgs=[...chatHistory];
+    // Solo los últimos 4 turnos de historial para mantener payload pequeño
+    const histReciente=chatHistory.slice(-4);
+    const msgs=[...histReciente];
     msgs[msgs.length-1]={role:'user',content:sys+'\n\nMECÁNICO: '+(txt||'analiza imagen')};
-    const res=await fetch(PROXY,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,messages:msgs})});
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload={model:'claude-sonnet-4-20250514',max_tokens:800,messages:msgs};
+    const res=await fetch(PROXY,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!res.ok){
+      const errTxt=await res.text();
+      throw new Error(`HTTP ${res.status}: ${errTxt.slice(0,200)}`);
+    }
     const data=await res.json();
     const reply=data.content?.map(c=>c.text||'').join('')||'Sin respuesta';
     document.getElementById('typing')?.remove();
