@@ -692,6 +692,21 @@ function buildCtx(placa){
     if(!d) return;
     ctx+=`[${f.fecha||'s/f'}|${f.placa||f.unidad||''}|${f.km||0}km] ${d}${di?' →'+di:''}\n`;
   });
+  // Agregar contexto de pagos si hay datos
+  if(typeof pagProveedores!=='undefined' && pagProveedores.length){
+    ctx+='\nPAGOS A PROVEEDORES:\n';
+    pagProveedores.forEach(p=>{
+      const pf=pagFacturas.filter(f=>f.provId===p.id);
+      const saldo=pf.reduce((a,f)=>a+Math.max(0,(f.monto||0)-(f.abonado||0)),0);
+      const venc=pf.filter(f=>pagEstFac(f)==='Vencido').length;
+      ctx+=`${p.nombre}: saldo S/${saldo.toFixed(2)}, ${pf.length} facturas, ${venc} vencidas (tipo:${p.tipoDefecto||'contado'})\n`;
+    });
+    const totalVenc=pagFacturas.filter(f=>pagEstFac(f)==='Vencido');
+    if(totalVenc.length){
+      ctx+='FACTURAS VENCIDAS: ';
+      ctx+=totalVenc.slice(0,5).map(f=>{const p=pagGetProv(f.provId);return`${p.nombre||'?'} S/${(f.monto||0).toFixed(0)} (${f.desc?.substring(0,30)||''}...)`;}).join(' | ')+'\n';
+    }
+  }
   return ctx;
 }
 
@@ -714,16 +729,22 @@ window.sendMsg=async function(){
   const sys=ctxTrim+`
 
 INSTRUCCIONES:
-Eres Salvador, asistente técnico de MISAGI. Español directo para mecánicos en campo.
+Eres Salvador, asistente integral de MISAGI S.A.C. Español directo. Manejas DOS áreas:
 
-MODO REGISTRO — si describen una falla para guardar, responde SOLO esto sin texto extra:
+1. MANTENIMIENTO TÉCNICO: fallas, historial, diagnóstico, preventivo, predicción por km.
+2. PAGOS A PROVEEDORES: consultas de saldos, facturas vencidas, estado de cuentas por pagar.
+
+MODO REGISTRO FALLA — si describen una falla para guardar, responde SOLO esto sin texto extra:
 REGISTRO_FALLA:{"placa":"","fecha":"YYYY-MM-DD","km":0,"descripcion":"","diagnostico":"","accionCorrectiva":"","gravedad":"BAJA|MEDIA|ALTA|CRÍTICA","estadoFalla":"ABIERTO","estado":"OPERATIVO","costo":0,"tecnico":""}
 
-MODO CONSULTA — datos reales del historial con fechas exactas.
+MODO CONSULTA PAGOS — cuando pregunten sobre proveedores, facturas o deudas, usa el CONTEXTO DE PAGOS del historial. Responde con los datos reales de saldos y estados.
+MODO CONSULTA FALLAS — datos reales del historial con fechas exactas.
 MODO PREDICCIÓN — estima próxima falla por km histórico.
 MODO FOTO — diagnóstico visual técnico.
 
-Fecha hoy: ${new Date().toISOString().slice(0,10)}. Si falta placa o descripción, pídelo. Respuestas cortas y directas.`;
+IMPORTANTE: Para registrar o editar proveedores/facturas, indica al usuario que use la pestaña "Pagos" en el menú inferior. Para CONSULTAS de saldos y vencimientos, respóndelas directamente con los datos disponibles.
+
+Fecha hoy: ${new Date().toISOString().slice(0,10)}. Respuestas cortas y directas.`;
 
   try{
     // Solo los últimos 4 turnos de historial para mantener payload pequeño
