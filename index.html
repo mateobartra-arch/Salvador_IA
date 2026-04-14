@@ -126,6 +126,12 @@ body{font-family:var(--f);display:flex;flex-direction:column;}
 .ib-img svg{fill:var(--txt2);}
 .ib-send{background:var(--v);}
 .ib-send svg{fill:white;}
+.ib-speak{background:var(--vl);position:relative;}
+.ib-speak.speaking{background:var(--v);animation:pulse 1.5s ease-in-out infinite;}
+.ib-speak svg{fill:var(--v);}
+.ib-speak.speaking svg{fill:white;}
+.voice-off{background:#f3f4f6;}
+.voice-off svg{fill:var(--txt3);}
 #photoInput{display:none;}
 
 /* UNIDADES DRAWER */
@@ -393,6 +399,9 @@ body{font-family:var(--f);display:flex;flex-direction:column;}
         <textarea class="chat-ta" id="chatInput" placeholder="Habla o escribe la falla..." rows="1"
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
+        <button class="ib ib-speak" id="speakBtn" onclick="toggleVoz()" title="Voz activada">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
         <button class="ib ib-send" onclick="sendMsg()">
           <svg viewBox="0 0 24 24" width="20" height="20"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
@@ -771,11 +780,13 @@ Fecha hoy: ${new Date().toISOString().slice(0,10)}. Respuestas cortas y directas
         if(!falla.fecha) falla.fecha=new Date().toISOString().slice(0,10);
         pendingFalla=falla;
         addMsg('sal','Entendido. Confirma antes de guardar:',{confirm:falla});
+        salvadorHabla('Entendido. Por favor confirma los datos antes de guardar.');
         chatHistory.push({role:'assistant',content:'[confirmación pendiente]'});
         return;
       }catch(_){}
     }
     addMsg('sal',reply);
+    salvadorHabla(reply);
     chatHistory.push({role:'assistant',content:reply});
     if(chatHistory.length>14) chatHistory=chatHistory.slice(-14);
   }catch(e){
@@ -798,6 +809,80 @@ window.toggleMic=function(){
     document.getElementById('micBtn').classList.add('rec');
   } else stopMic();
 };
+
+// ── VOZ DE SALVADOR ───────────────────────────────────────────
+let vozActiva = true;
+let synth = window.speechSynthesis;
+let vozSpeaking = false;
+
+function toggleVoz(){
+  vozActiva = !vozActiva;
+  const btn = document.getElementById('speakBtn');
+  if(vozActiva){
+    btn.className='ib ib-speak';
+    btn.title='Voz activada';
+  } else {
+    synth.cancel();
+    btn.className='ib voice-off';
+    btn.title='Voz desactivada';
+    btn.innerHTML='<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>';
+  }
+}
+
+function salvadorHabla(texto){
+  if(!vozActiva || !synth) return;
+  synth.cancel();
+  // Limpiar markdown y html para la voz
+  const limpio = texto
+    .replace(/<[^>]+>/g,' ')
+    .replace(/\*\*(.*?)\*\*/g,'$1')
+    .replace(/\*(.*?)\*/g,'$1')
+    .replace(/#{1,3}\s/g,'')
+    .replace(/REGISTRO_FALLA:\{.*\}/g,'Registro listo para confirmar.')
+    .replace(/\s{2,}/g,' ')
+    .trim();
+  if(!limpio || limpio.length < 3) return;
+
+  // Partir en fragmentos si es muy largo (iOS limitación)
+  const maxLen = 200;
+  const fragmentos = [];
+  let i = 0;
+  while(i < limpio.length){
+    let end = Math.min(i + maxLen, limpio.length);
+    if(end < limpio.length){
+      const punto = limpio.lastIndexOf('.', end);
+      const coma = limpio.lastIndexOf(',', end);
+      end = punto > i + 50 ? punto + 1 : coma > i + 50 ? coma + 1 : end;
+    }
+    fragmentos.push(limpio.slice(i, end).trim());
+    i = end;
+  }
+
+  function hablarFragmento(idx){
+    if(idx >= fragmentos.length){ vozSpeaking=false; document.getElementById('speakBtn').classList.remove('speaking'); return; }
+    const utter = new SpeechSynthesisUtterance(fragmentos[idx]);
+    utter.lang = 'es-PE';
+    utter.rate = 0.95;
+    utter.pitch = 1.0;
+    utter.volume = 1.0;
+    // Buscar voz en español
+    const voces = synth.getVoices();
+    const vozES = voces.find(v=>v.lang.startsWith('es')&&v.name.toLowerCase().includes('male'))
+      || voces.find(v=>v.lang.startsWith('es-PE'))
+      || voces.find(v=>v.lang.startsWith('es-US'))
+      || voces.find(v=>v.lang.startsWith('es'));
+    if(vozES) utter.voice = vozES;
+    utter.onend = () => hablarFragmento(idx+1);
+    utter.onerror = () => { vozSpeaking=false; document.getElementById('speakBtn').classList.remove('speaking'); };
+    synth.speak(utter);
+    vozSpeaking = true;
+    document.getElementById('speakBtn').classList.add('speaking');
+  }
+  hablarFragmento(0);
+}
+
+// Precargar voces (necesario en algunos navegadores)
+if(synth.onvoiceschanged !== undefined){ synth.onvoiceschanged = () => synth.getVoices(); }
 function stopMic(){recognition?.stop();isRec=false;document.getElementById('micBtn').classList.remove('rec');}
 
 window.handlePhotos=function(input){
