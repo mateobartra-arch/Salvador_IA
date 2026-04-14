@@ -821,8 +821,10 @@ let vozAudio = null;
 
 // Config guardada en localStorage del dispositivo
 const VOZ_CFG = {
-  get apiKey(){ return localStorage.getItem('el_apikey')||''; },
-  get voiceId(){ return localStorage.getItem('el_voiceid')||'8MlXhVr7f7x9lck6CiCF'; }, // Adam default
+  _ak: 'sk_79887ac4b2c3803a44d06f440aade7efd549e0d2d72e48b6',
+  _vi: '8MlXhVr7f7x9lck6CiCF',
+  get apiKey(){ return localStorage.getItem('el_apikey')||this._ak; },
+  get voiceId(){ return localStorage.getItem('el_voiceid')||this._vi; },
   set apiKey(v){ localStorage.setItem('el_apikey',v); },
   set voiceId(v){ localStorage.setItem('el_voiceid',v); }
 };
