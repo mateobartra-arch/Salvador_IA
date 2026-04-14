@@ -822,7 +822,7 @@ let vozAudio = null;
 // Config guardada en localStorage del dispositivo
 const VOZ_CFG = {
   get apiKey(){ return localStorage.getItem('el_apikey')||''; },
-  get voiceId(){ return localStorage.getItem('el_voiceid')||'zwDSHuqO0tEVwNUuHmR1'; }, // Adam default
+  get voiceId(){ return localStorage.getItem('el_voiceid')||'8MlXhVr7f7x9lck6CiCF'; }, // Adam default
   set apiKey(v){ localStorage.setItem('el_apikey',v); },
   set voiceId(v){ localStorage.setItem('el_voiceid',v); }
 };
@@ -904,26 +904,28 @@ function limpiarParaVoz(texto){
 
 async function salvadorHabla(texto){
   if(!vozActiva) return;
-  if(vozAudio){ vozAudio.pause(); vozAudio=null; }
+  if(vozAudio){ vozAudio.pause(); vozAudio=null; vozSpeaking=false; }
 
   const apiKey = VOZ_CFG.apiKey;
   const voiceId = VOZ_CFG.voiceId;
-
-  // Sin API key → fallback a voz del sistema
-  if(!apiKey){
-    salvadorHablaFallback(texto);
-    return;
-  }
+  const btn = document.getElementById('speakBtn');
 
   const limpio = limpiarParaVoz(texto);
   if(!limpio || limpio.length < 3) return;
 
-  const btn = document.getElementById('speakBtn');
+  // Sin API key → fallback inmediato
+  if(!apiKey){
+    console.log('[Salvador Voz] Sin API key, usando fallback del navegador');
+    salvadorHablaFallback(texto);
+    return;
+  }
+
   btn.classList.add('speaking');
+  console.log('[Salvador Voz] Llamando ElevenLabs, voiceId:', voiceId, '| chars:', limpio.length);
 
   try{
     const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+      'https://api.elevenlabs.io/v1/text-to-speech/' + voiceId,
       {
         method: 'POST',
         headers: {
@@ -935,42 +937,77 @@ async function salvadorHabla(texto){
           text: limpio,
           model_id: 'eleven_multilingual_v2',
           voice_settings: {
-            stability: 0.30,
-            similarity_boost: 0.75,
-            style: 0.55,
+            stability: 0.28,
+            similarity_boost: 0.80,
+            style: 0.50,
             use_speaker_boost: true
           }
         })
       }
     );
 
+    console.log('[Salvador Voz] Respuesta HTTP:', res.status, res.statusText);
+
     if(!res.ok){
-      const err = await res.json().catch(()=>({}));
-      console.warn('ElevenLabs error:',err);
+      let errMsg = '';
+      try{ const j=await res.json(); errMsg=j.detail?.message||JSON.stringify(j); }catch(e){}
+      console.warn('[Salvador Voz] Error ElevenLabs:', res.status, errMsg);
       btn.classList.remove('speaking');
+      // Mostrar error visible si es de autenticación
+      if(res.status===401||res.status===403){
+        mostrarToast('API key inválida. Abre Configuración de voz y verifica.');
+      } else if(res.status===422){
+        mostrarToast('Voice ID incorrecto. Verifica en Configuración de voz.');
+      }
       salvadorHablaFallback(texto);
       return;
     }
 
     const blob = await res.blob();
+    console.log('[Salvador Voz] Audio recibido, tamaño:', blob.size, 'bytes');
+
+    if(blob.size < 100){
+      console.warn('[Salvador Voz] Audio vacío, usando fallback');
+      btn.classList.remove('speaking');
+      salvadorHablaFallback(texto);
+      return;
+    }
+
     const url = URL.createObjectURL(blob);
     vozAudio = new Audio(url);
+    vozAudio.oncanplaythrough = () => {
+      vozAudio.play().catch(e=>{
+        console.warn('[Salvador Voz] Error play:', e);
+        btn.classList.remove('speaking');
+      });
+    };
     vozAudio.onended = () => {
       vozSpeaking = false;
       btn.classList.remove('speaking');
       URL.revokeObjectURL(url);
+      vozAudio = null;
     };
-    vozAudio.onerror = () => {
+    vozAudio.onerror = (e) => {
+      console.warn('[Salvador Voz] Error audio:', e);
       vozSpeaking = false;
       btn.classList.remove('speaking');
+      salvadorHablaFallback(texto);
     };
-    vozAudio.play();
     vozSpeaking = true;
+
   } catch(e){
-    console.warn('ElevenLabs fetch error:',e);
+    console.warn('[Salvador Voz] Fetch error:', e.message);
     btn.classList.remove('speaking');
     salvadorHablaFallback(texto);
   }
+}
+
+function mostrarToast(msg){
+  const t = document.createElement('div');
+  t.style.cssText='position:fixed;top:70px;left:50%;transform:translateX(-50%);background:#1a1a18;color:white;padding:10px 16px;border-radius:20px;font-size:13px;z-index:500;max-width:85vw;text-align:center;';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 4000);
 }
 
 // Fallback — voz del navegador si no hay API key
